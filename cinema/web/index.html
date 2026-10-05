@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>影院会员券 · 跨场次改签</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">🎬 光影影城 <span class="sub">会员券跨场次改签差额系统</span></div>
+    <div class="top-actions">
+      <span class="member-pill" v-if="memberId">会员 #{{ memberId }} · 张三</span>
+      <button class="btn ghost" @click="resetAll">重置演示数据</button>
+    </div>
+  </header>
+
+  <main class="layout">
+
+    <!-- 步骤 1：选择原票 -->
+    <section class="card">
+      <h2><span class="step">1</span> 选择要改签的票</h2>
+      <div class="ticket-list">
+        <div v-for="t in tickets" :key="t.id"
+             class="ticket-chip" :class="{active: chosenTicket && chosenTicket.id===t.id}"
+             @click="chooseTicket(t)">
+          <div class="tc-main">{{ t.price.session.movie }} · {{ fmtSeat(t.price.seat) }}</div>
+          <div class="tc-sub">{{ fmtTime(t.price.session.start_at) }} · {{ t.price.session.hall }}</div>
+          <div class="tc-meta">
+            原价 ¥{{ money(t.price.base_price) }}
+            <span v-if="t.price.coupon"> · {{ t.price.coupon.name }} 抵 ¥{{ money(t.price.discount) }}</span>
+            · 实付 <b>¥{{ money(t.price.paid) }}</b>
+          </div>
+          <div class="tc-badge" v-if="t.companions>0">同行订单：另有 {{ t.companions }} 张票保留原场次</div>
+        </div>
+        <div v-if="!tickets.length" class="empty">暂无有效票，请重置演示数据</div>
+      </div>
+    </section>
+
+    <!-- 步骤 2：新场次 + 选座 + 券 -->
+    <section class="card" v-if="chosenTicket">
+      <h2><span class="step">2</span> 选择新场次与座位</h2>
+
+      <div class="session-row">
+        <div v-for="s in sessions" :key="s.id"
+             class="sess-chip" :class="{active: newSessionId===s.id, dim: s.id===chosenTicket.price.session.id}"
+             @click="pickSession(s.id)">
+          <div class="sc-title">{{ s.movie }}</div>
+          <div class="sc-sub">{{ fmtTime(s.start_at) }} · {{ s.hall }}</div>
+          <div class="sc-price">¥{{ money(s.base_price) }}</div>
+        </div>
+      </div>
+
+      <div class="pick-grid">
+        <div>
+          <div class="legend">
+            <span><i class="dot available"></i>可选</span>
+            <span><i class="dot held"></i>他人预留中</span>
+            <span><i class="dot sold"></i>已售/原票</span>
+            <span><i class="dot pick"></i>已选</span>
+          </div>
+          <div class="screen">银幕 SCREEN</div>
+          <div class="seats">
+            <div v-for="s in seats" :key="s.id"
+                 class="seat"
+                 :class="seatClass(s)"
+                 @click="pickSeat(s)">
+              <span class="rowtag" v-if="s.number===1">{{ s.row }}</span>{{ s.number }}
+            </div>
+          </div>
+        </div>
+
+        <div class="coupon-box">
+          <h3>新票使用的券</h3>
+          <label class="coupon-opt">
+            <input type="radio" :checked="newCouponId===null" @change="newCouponId=null">
+            <span>沿用原票优惠依据（{{ chosenTicket.price.coupon ? chosenTicket.price.coupon.name : '原票无券，按原价' }}）</span>
+          </label>
+          <label v-for="c in usableCoupons" :key="c.id" class="coupon-opt">
+            <input type="radio" name="cp" :value="c.id" v-model.number="newCouponId">
+            <span>{{ c.name }}
+              <em>{{ c.type==='discount' ? (c.rate/10)+'折' : ('立减 ¥'+money(c.amount)) }}</em>
+              <small class="exp">有效期至 {{ fmtDate(c.expire_at) }}</small>
+            </span>
+          </label>
+          <div v-if="!usableCoupons.length" class="hint">没有可用的新券（已使用/已过期的券不可再次抵扣）</div>
+          <div class="hint">原票券优惠依据（{{ chosenTicket.price.coupon ? chosenTicket.price.coupon.name : '无' }}）会永久保留在原票记录中。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 步骤 3：金额对照 -->
+    <section class="card" v-if="chosenTicket && newSeatId && quote">
+      <h2><span class="step">3</span> 核对新旧票价、券与补退明细</h2>
+      <div class="compare">
+        <div class="col old">
+          <h3>原票</h3>
+          <dl>
+            <dt>影片/场次</dt><dd>{{ quote.old_ticket.session.movie }} · {{ fmtTime(quote.old_ticket.session.start_at) }}</dd>
+            <dt>座位</dt><dd>{{ fmtSeat(quote.old_ticket.seat) }}</dd>
+            <dt>基础票价</dt><dd>¥{{ money(quote.old_ticket.base_price) }}</dd>
+            <dt>已用会员券</dt><dd>{{ quote.old_ticket.coupon ? quote.old_ticket.coupon.name : '—' }}</dd>
+            <dt>券抵扣</dt><dd class="minus">- ¥{{ money(quote.old_ticket.discount) }}</dd>
+            <dt class="total">原票实付</dt><dd class="total">¥{{ money(quote.old_ticket.paid) }}</dd>
+          </dl>
+        </div>
+        <div class="arrow">➡️</div>
+        <div class="col new">
+          <h3>新票</h3>
+          <dl>
+            <dt>影片/场次</dt><dd>{{ quote.new_ticket.session.movie }} · {{ fmtTime(quote.new_ticket.session.start_at) }}</dd>
+            <dt>座位</dt><dd>{{ fmtSeat(quote.new_ticket.seat) }}</dd>
+            <dt>基础票价</dt><dd>¥{{ money(quote.new_ticket.base_price) }}</dd>
+            <dt>使用会员券</dt><dd>{{ quote.new_ticket.coupon ? quote.new_ticket.coupon.name + (quote.new_ticket.coupon.status==='carried' ? '（沿用）' : '') : '无' }}</dd>
+            <dt>券抵扣</dt><dd class="minus">- ¥{{ money(quote.new_ticket.discount) }}</dd>
+            <dt class="total">新票应付</dt><dd class="total">¥{{ money(quote.new_ticket.paid) }}</dd>
+          </dl>
+        </div>
+        <div class="col diff">
+          <h3>补退明细</h3>
+          <div class="diff-calc">
+            ¥{{ money(quote.new_ticket.paid) }}
+            <span class="op">−</span>
+            ¥{{ money(quote.old_ticket.paid) }}
+          </div>
+          <div class="diff-amount" :class="quote.diff.action">
+            <template v-if="quote.diff.action==='pay'">需补交<br><b>¥{{ money(quote.diff.amount) }}</b></template>
+            <template v-else-if="quote.diff.action==='refund'">应退还<br><b>¥{{ money(-quote.diff.amount) }}</b></template>
+            <template v-else>差额为 0<br><b>无需支付</b></template>
+          </div>
+          <p class="reason">{{ quote.diff.reason }}</p>
+          <p class="hint">确认后新座位将限时预留 {{ Math.round(ttlMs/1000) }} 秒；支付成功才释放原座位并完成改签。</p>
+          <button class="btn primary big" :disabled="creating" @click="confirmExchange">
+            {{ creating ? '提交中…' : '确认改签并预留新座位' }}
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 步骤 4：预留与支付 -->
+    <section class="card" v-if="active" id="pay-card">
+      <h2><span class="step">4</span> 预留 &amp; 模拟支付
+        <span class="exstatus" :class="active.status">{{ statusText(active.status) }}</span>
+      </h2>
+
+      <div v-if="isActiveState(active.status)" class="hold-bar">
+        <div>⏳ 新座位 <b>{{ fmtSeat(active.new_ticket.seat) }}</b> 保留中</div>
+        <div class="countdown" :class="{urgent: countdown<=10}">剩余 {{ countdownText }}（{{ active.reservation.expire_at }}）</div>
+      </div>
+
+      <div class="compare compact">
+        <div class="col old">
+          <h3>原票（{{ active.old_ticket.session.movie }}）</h3>
+          <p>{{ fmtSeat(active.old_ticket.seat) }} · 实付 ¥{{ money(active.old_ticket.paid) }}</p>
+        </div>
+        <div class="col new">
+          <h3>新票（{{ active.new_ticket.session.movie }}）</h3>
+          <p>{{ fmtSeat(active.new_ticket.seat) }} · 应付 ¥{{ money(active.new_ticket.paid) }}</p>
+        </div>
+        <div class="col diff">
+          <h3>补退</h3>
+          <p class="diff-amount-sm" :class="active.diff.action">
+            {{ active.diff.action==='pay' ? '补 ¥'+money(active.diff.amount) :
+               active.diff.action==='refund' ? '退 ¥'+money(-active.diff.amount) : '¥0' }}
+          </p>
+        </div>
+      </div>
+
+      <!-- 支付操作 -->
+      <div v-if="isActiveState(active.status) && pendingPay" class="pay-actions">
+        <button class="btn success" @click="mockPay(false)">模拟支付成功 ¥{{ money(pendingPay.amount) }}</button>
+        <button class="btn danger" @click="mockPay(true)">模拟支付失败（余额不足）</button>
+        <button class="btn ghost" @click="abandon">放弃改签（释放新座位）</button>
+      </div>
+      <div v-else-if="isActiveState(active.status) && active.diff.action!=='pay'" class="pay-actions">
+        <button v-if="active.diff.action==='none'" class="btn success" @click="finalizeZero">差额为 0 · 确认完成</button>
+        <button v-else class="btn success" @click="finalizeRefund">确认退 ¥{{ money(-active.diff.amount) }} 并改签</button>
+        <button class="btn ghost" @click="abandon">放弃改签</button>
+      </div>
+
+      <!-- 结果说明 -->
+      <div v-if="active.status==='succeeded'" class="result ok">
+        ✅ 改签完成。新票号 #{{ active.new_ticket_id }}；原票已归档，原座位已释放。
+        <span v-if="active.diff.action==='refund'">差额 ¥{{ money(-active.diff.amount) }} 已自动退回（退款单已生成）。</span>
+      </div>
+      <div v-if="active.status==='failed'" class="result fail">❌ 支付失败：{{ active.fail_reason }}。原订单与原座位保持不变，新座位预留已释放，被占用的券已归还。</div>
+      <div v-if="active.status==='expired'" class="result fail">⌛ 预留超时：新座位已释放，原票保留。可重新选座发起改签。</div>
+      <div v-if="active.status==='canceled'" class="result">已取消：新座位释放，原票保留。</div>
+
+      <!-- 同行票保留情况 -->
+      <details class="mates" v-if="active.companions_kept && active.companions_kept.length">
+        <summary>同行订单其余 {{ active.companions_kept.length }} 张票（继续保留原场次，未受影响）</summary>
+        <ul><li v-for="(m,i) in active.companions_kept" :key="i">{{ m.ticket_no }} · 场次#{{ m.session_id }} · 座位 {{ m.seat }} · {{ m.status }}</li></ul>
+      </details>
+
+      <!-- 回执实验室：重放/迟到回执 -->
+      <details class="receipt-lab">
+        <summary>🧪 回执幂等实验室（重复 / 迟到回执）</summary>
+        <div class="lab-row" v-if="lastReceiptNo">
+          <button class="btn warn" @click="replaySameReceipt">重放上一条回执（{{ lastReceiptNo.slice(0,16) }}…）</button>
+          <span class="hint">同一回执重复到达：effect 应为 duplicate，绝不二次改签。</span>
+        </div>
+        <div class="lab-row" v-if="pendingPay">
+          <button class="btn warn" @click="lateSuccess" :disabled="active.status==='succeeded'">
+            先制造失败，再发送“迟到的支付成功”回执
+          </button>
+          <span class="hint">钱会自动原路退回，原票保留，不会把已失败的改签重新执行。</span>
+        </div>
+        <div v-if="lastReceiptResult" class="lab-result">
+          最近回执结果：<b>{{ lastReceiptResult.effect }}</b>
+          <span v-if="lastReceiptResult.duplicate">（duplicate=true，已忽略）</span>
+        </div>
+      </details>
+    </section>
+
+    <footer class="foot">
+      Go + Gin + GORM(SQLite/WAL) · Vue 3 · 金额单位：分 · 所有状态转移均为事务 + CAS + 唯一约束
+    </footer>
+  </main>
+</div>
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

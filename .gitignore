@@ -13,3 +13,6 @@ build/
 轨迹/
 录屏/
 视频/
+
+# cinema sqlite data
+data/
