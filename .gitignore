@@ -13,3 +13,12 @@ build/
 轨迹/
 录屏/
 视频/
+
+# 本项目
+backend/bin/
+backend/data/
+backend/*.db
+backend/*.db-*
+# 前端为本地 vendor 的静态源码，需要纳入版本管理（dist 目录例外）
+!backend/web/dist/
+!backend/web/dist/**
